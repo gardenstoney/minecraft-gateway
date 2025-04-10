@@ -1,15 +1,18 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"mcmockserver/packets"
 	"net"
+	"sync"
 )
 
 type ConnectionMode byte
 
 const (
-	Disconnect ConnectionMode = iota
+	_ ConnectionMode = iota
 	Status
 	Login
 	Transfer
@@ -17,14 +20,82 @@ const (
 	Play
 )
 
-// Handle incoming client connections
-func HandleClient(conn net.Conn, handler PacketHandler) {
-	defer conn.Close()
+type Session struct {
+	Ctx    context.Context
+	Cancel context.CancelFunc
+	Conn   net.Conn
+	Queue  chan *bytes.Buffer
+	Mode   ConnectionMode
+	Wg     sync.WaitGroup
+	once   sync.Once
+}
 
-	fmt.Println("Client connected:", conn.RemoteAddr())
+func (s *Session) processQueue(ctx context.Context) {
+	defer func() {
+		for {
+			select {
+			case buf := <-s.Queue:
+				_, err := buf.WriteTo(s.Conn)
+				if err != nil {
+					fmt.Println("processQueue:", err)
+				}
+			default:
+				s.Wg.Done()
+				return
+			}
+		}
+
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case buf := <-s.Queue:
+			_, err := buf.WriteTo(s.Conn)
+			if err != nil {
+				fmt.Println("processQueue:", err)
+			}
+		}
+	}
+}
+
+func (s *Session) Close() {
+	s.once.Do(func() {
+		s.Cancel()
+		// wait for the goroutines to finish
+		s.Wg.Wait()
+
+		fmt.Println("Closing Session:", s.Conn.RemoteAddr())
+		s.Conn.Close()
+		close(s.Queue)
+	})
+}
+
+func NewSession(conn net.Conn, parentCtx context.Context) *Session {
+	ctx, cancel := context.WithCancel(parentCtx)
+	queue := make(chan *bytes.Buffer, 16)
+
+	session := Session{
+		Ctx:    ctx,
+		Cancel: cancel,
+		Conn:   conn,
+		Queue:  queue,
+	}
+
+	session.Wg.Add(1)
+	go session.processQueue(ctx)
+
+	return &session
+}
+
+func HandleSession(session *Session, handler PacketHandler) {
+	defer session.Close()
+
+	fmt.Println("Client connected:", session.Conn.RemoteAddr())
 
 	// Handshake
-	packetID, bufreader, _, err := packets.ReadPacket(conn)
+	packetID, bufreader, _, err := packets.ReadPacket(session.Conn)
 	if err != nil {
 		fmt.Println("Failed to read handshake packet:", err)
 		return
@@ -40,14 +111,19 @@ func HandleClient(conn net.Conn, handler PacketHandler) {
 
 	fmt.Println("Received handshake", handshake)
 
-	mode := ConnectionMode(handshake.RequestType) // a bit risky?? checking if it's valid first is a good idea
+	session.Mode = ConnectionMode(handshake.RequestType) // a bit risky?? checking if it's valid first is a good idea
 
 	var packetRegistry *map[int32]func() packets.ServerboundPacket
 
 	for {
-		switch mode {
-		case Disconnect:
+		// Return if the context was canceled
+		select {
+		case <-session.Ctx.Done():
 			return
+		default:
+		}
+
+		switch session.Mode {
 		case Status:
 			packetRegistry = &packets.StatusPacketRegistry
 		case Login:
@@ -60,7 +136,7 @@ func HandleClient(conn net.Conn, handler PacketHandler) {
 			packetRegistry = &packets.IngamePacketRegistry
 		}
 
-		packetID, bufreader, payload, err := packets.ReadPacket(conn)
+		packetID, bufreader, payload, err := packets.ReadPacket(session.Conn)
 		if err != nil {
 			return
 		}
@@ -81,6 +157,6 @@ func HandleClient(conn net.Conn, handler PacketHandler) {
 			return
 		}
 
-		handler(&mode, packet, conn)
+		handler(session, packet)
 	}
 }

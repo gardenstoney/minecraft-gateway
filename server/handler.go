@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"mcmockserver/packets"
-	"net"
 )
 
-type PacketHandler func(mode *ConnectionMode, packet packets.ServerboundPacket, conn net.Conn)
+type PacketHandler func(session *Session, packet packets.ServerboundPacket)
 
 const serverlistping = "{\"version\": {\"name\": \"1.21.1\",\"protocol\": 767},\"players\": {\"max\": 100,\"online\": 0,\"sample\": []},\"description\": {\"text\": \"Hello, world!\"},\"favicon\": \"data:image/png;base64,<data>\",\"enforcesSecureChat\": false}"
 
-func DefaultStatusReqPacketHandler(conn net.Conn) error {
+func DefaultStatusReqPacketHandler(session *Session) error {
 	fmt.Println("Received status request")
 
 	// Status response
@@ -24,17 +23,13 @@ func DefaultStatusReqPacketHandler(conn net.Conn) error {
 		return err
 	}
 
-	_, err = buf.WriteTo(conn)
-	if err != nil {
-		fmt.Println("Failed to write status response:", err)
-		return err
-	}
+	session.Queue <- buf
 
 	fmt.Println("Sent status response")
 	return nil
 }
 
-func DefaultPingReqPacketHandler(mode *ConnectionMode, p *packets.PingReqPacket, conn net.Conn) error {
+func DefaultPingReqPacketHandler(session *Session, p *packets.PingReqPacket) error {
 	fmt.Println("Received ping request")
 
 	// Pong response
@@ -49,18 +44,14 @@ func DefaultPingReqPacketHandler(mode *ConnectionMode, p *packets.PingReqPacket,
 		return err
 	}
 
-	_, err = buf.WriteTo(conn)
-	if err != nil {
-		fmt.Println("Failed to write pong response:", err)
-		return err
-	}
+	session.Queue <- buf
 
 	fmt.Println("Sent pong response, closing connection")
-	*mode = Disconnect
+	session.Close()
 	return nil
 }
 
-func DefaultLoginStartPacketHandler(mode *ConnectionMode, p *packets.LoginStartPacket, conn net.Conn) error {
+func DefaultLoginStartPacketHandler(session *Session, p *packets.LoginStartPacket) error {
 	fmt.Println("LoginStartPacket", p)
 
 	buf := bytes.NewBuffer(make([]byte, 0, 18))
@@ -74,18 +65,15 @@ func DefaultLoginStartPacketHandler(mode *ConnectionMode, p *packets.LoginStartP
 		return err
 	}
 
-	_, err = buf.WriteTo(conn)
-	if err != nil {
-		return err
-	}
+	session.Queue <- buf
 	fmt.Println("Sent LoginSuccess")
 
 	return nil
 }
 
-func DefaultLoginAckPacketHandler(mode *ConnectionMode, conn net.Conn) error {
+func DefaultLoginAckPacketHandler(session *Session) error {
 	fmt.Println("Login Acknowledged, switching to configuration mode")
-	*mode = Config
+	session.Mode = Config
 	return nil
 }
 
