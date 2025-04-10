@@ -84,7 +84,7 @@ func (p *AckFinishConfigPacket) Handle(conn net.Conn, context *util.ConnContext)
 	return err
 }
 
-// FIX: Reason is not just json formated string?
+// TODO: need NBT encoding and decoding
 type ConfigDisconnectPacket struct {
 	Reason String
 }
@@ -93,7 +93,9 @@ func (p ConfigDisconnectPacket) Write(buf *bytes.Buffer) error {
 	return BuildPacket(
 		buf,
 		VarInt(2),
-		p.Reason,
+		Byte(8),                      // TAG_String NBT id
+		UnsignedShort(len(p.Reason)), // NBT payload length
+		RawBytes([]byte(p.Reason)),
 	)
 }
 

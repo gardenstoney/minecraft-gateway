@@ -300,6 +300,14 @@ func (df *ByteArray) Read(r *bytes.Reader) error {
 	return err
 }
 
+type RawBytes []byte
+
+func (df RawBytes) Write(buf *bytes.Buffer) error {
+	_, err := buf.Write(df)
+
+	return err
+}
+
 // TODO: nah just make it check if it's nil, also T should be always pointer. make it explicit.
 // all other DataTypes shouldn't be able to call Read if it's nil.
 // only one's in the Optional DataType can be.
