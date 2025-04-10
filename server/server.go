@@ -31,21 +31,7 @@ type Session struct {
 }
 
 func (s *Session) processQueue(ctx context.Context) {
-	defer func() {
-		for {
-			select {
-			case buf := <-s.Queue:
-				_, err := buf.WriteTo(s.Conn)
-				if err != nil {
-					fmt.Println("processQueue:", err)
-				}
-			default:
-				s.Wg.Done()
-				return
-			}
-		}
-
-	}()
+	defer s.Wg.Done()
 
 	for {
 		select {
@@ -65,6 +51,19 @@ func (s *Session) Close() {
 		s.Cancel()
 		// wait for the goroutines to finish
 		s.Wg.Wait()
+
+	flush: // flush queue
+		for {
+			select {
+			case buf := <-s.Queue:
+				_, err := buf.WriteTo(s.Conn)
+				if err != nil {
+					fmt.Println("processQueue:", err)
+				}
+			default:
+				break flush
+			}
+		}
 
 		fmt.Println("Closing Session:", s.Conn.RemoteAddr())
 		s.Conn.Close()
