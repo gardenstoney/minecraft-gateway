@@ -146,6 +146,33 @@ type VarInt int32
 const SEGMENT_BITS = 0x7F // 0b01111111
 const CONTINUE_BIT = 0x80 // 0b10000000
 
+func ReadVarint(r io.Reader) (int32, error) {
+	var value int32
+	var currentByte [1]byte
+	bytes_read := 0
+
+	for {
+		_, err := r.Read(currentByte[:])
+		if err != nil {
+			return value, err
+		}
+
+		value |= int32(currentByte[0]&SEGMENT_BITS) << (bytes_read * 7)
+
+		if (currentByte[0] & CONTINUE_BIT) == 0 {
+			break
+		}
+
+		bytes_read += 1
+
+		if bytes_read >= 5 {
+			return value, errors.New("VarInt is too big")
+		}
+	}
+
+	return value, nil
+}
+
 func (df VarInt) Write(buf *bytes.Buffer) error {
 	v := uint32(df)
 	for i := 0; ; i++ {
@@ -163,32 +190,10 @@ func (df VarInt) Write(buf *bytes.Buffer) error {
 }
 
 func (df *VarInt) Read(r *bytes.Reader) error {
-	var value int32
-	var currentByte [1]byte
-	bytes_read := 0
-
-	for {
-		_, err := r.Read(currentByte[:])
-		if err != nil {
-			return err
-		}
-
-		value |= int32(currentByte[0]&SEGMENT_BITS) << (bytes_read * 7)
-
-		if (currentByte[0] & CONTINUE_BIT) == 0 {
-			break
-		}
-
-		bytes_read += 1
-
-		if bytes_read >= 5 {
-			return errors.New("VarInt is too big")
-		}
-	}
-
+	value, err := ReadVarint(r)
 	*df = VarInt(value)
 
-	return nil
+	return err
 }
 
 type Position struct {

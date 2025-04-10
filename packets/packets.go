@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"mcmockserver/util"
 )
 
 type ServerboundPacket interface {
@@ -16,9 +15,8 @@ type ClientboundPacket interface {
 	Write(buf *bytes.Buffer) error
 }
 
-// needs refactoring: utilize packets/util.go and ditch util.ReadThings
 func ReadPacket(r io.Reader) (int32, *bytes.Reader, []byte, error) {
-	payloadLength, err := util.ReadVarint(r)
+	payloadLength, err := ReadVarint(r)
 
 	if err != nil {
 		return -1, nil, nil, fmt.Errorf("failed to read payloadLength (%w)", err)
@@ -33,7 +31,7 @@ func ReadPacket(r io.Reader) (int32, *bytes.Reader, []byte, error) {
 
 	bufreader := bytes.NewReader(payload)
 
-	packetID, err := util.ReadVarint(bufreader)
+	packetID, err := ReadVarint(bufreader)
 	if err != nil {
 		return -1, nil, nil, fmt.Errorf("failed to parse packetID (%w)", err)
 	}
