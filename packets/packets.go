@@ -3,7 +3,6 @@ package packets
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 )
 
@@ -15,28 +14,28 @@ type ClientboundPacket interface {
 	Write(buf *bytes.Buffer) error
 }
 
-func ReadPacket(r io.Reader) (int32, *bytes.Reader, []byte, error) {
+func ReadPacket(r io.Reader) (packetID int32, bufreader *bytes.Reader, err error) {
 	payloadLength, err := ReadVarint(r)
 
 	if err != nil {
-		return -1, nil, nil, fmt.Errorf("failed to read payloadLength (%w)", err)
+		return -1, nil, err
 	}
 
 	// Read the payload
 	payload := make([]byte, payloadLength)
 	_, err = io.ReadFull(r, payload)
 	if err != nil {
-		return -1, nil, nil, fmt.Errorf("failed to read payload (%w), (expected length: %d)", err, payloadLength)
+		return -1, nil, err
 	}
 
-	bufreader := bytes.NewReader(payload)
+	bufreader = bytes.NewReader(payload)
 
-	packetID, err := ReadVarint(bufreader)
+	packetID, err = ReadVarint(bufreader)
 	if err != nil {
-		return -1, nil, nil, fmt.Errorf("failed to parse packetID (%w)", err)
+		return -1, nil, err
 	}
 
-	return packetID, bufreader, payload, nil
+	return packetID, bufreader, nil
 }
 
 // @gen:read

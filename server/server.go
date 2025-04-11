@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"mcmockserver/packets"
 	"net"
 	"sync"
+	"time"
 )
 
 type ConnectionMode byte
@@ -88,13 +91,50 @@ func NewSession(conn net.Conn, parentCtx context.Context) *Session {
 	return &session
 }
 
+func ReadPacket(ctx context.Context, session *Session) (id int32, payload *bytes.Reader, err error) {
+	readCh := make(chan struct {
+		int32
+		*bytes.Reader
+	}, 1)
+
+	session.Wg.Add(1)
+	go func() {
+		defer session.Wg.Done()
+
+		id, payload, err := packets.ReadPacket(session.Conn)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				go session.Close()
+			}
+			fmt.Println(err)
+			return
+		}
+		readCh <- struct {
+			int32
+			*bytes.Reader
+		}{id, payload}
+	}()
+
+	select {
+	case <-ctx.Done():
+		session.Conn.SetReadDeadline(time.Now())
+		err = ctx.Err()
+	case read := <-readCh:
+		id = read.int32
+		payload = read.Reader
+	}
+
+	close(readCh)
+	return id, payload, err
+}
+
 func HandleSession(session *Session, handler PacketHandler) {
 	defer session.Close()
 
 	fmt.Println("Client connected:", session.Conn.RemoteAddr())
 
 	// Handshake
-	packetID, bufreader, _, err := packets.ReadPacket(session.Conn)
+	packetID, bufreader, err := ReadPacket(session.Ctx, session)
 	if err != nil {
 		fmt.Println("Failed to read handshake packet:", err)
 		return
@@ -135,7 +175,7 @@ func HandleSession(session *Session, handler PacketHandler) {
 			packetRegistry = &packets.IngamePacketRegistry
 		}
 
-		packetID, bufreader, payload, err := packets.ReadPacket(session.Conn)
+		packetID, payload, err := ReadPacket(session.Ctx, session)
 		if err != nil {
 			return
 		}
@@ -151,7 +191,7 @@ func HandleSession(session *Session, handler PacketHandler) {
 
 		packet := packetFactory()
 
-		if err := packet.Read(bufreader); err != nil {
+		if err := packet.Read(payload); err != nil {
 			fmt.Println("Failed to read packet content:", err)
 			return
 		}
