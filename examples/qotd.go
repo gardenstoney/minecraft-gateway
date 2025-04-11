@@ -11,6 +11,11 @@ import (
 	"mcmockserver/packets"
 	"mcmockserver/server"
 	"net"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 )
 
 var quotes = map[string][]string{
@@ -51,9 +56,14 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 			return
 		}
 
-		session.Queue <- buf
-
-		session.Close()
+		go func() {
+			select {
+			case <-time.After(3 * time.Second):
+				session.Queue <- buf
+				session.Close()
+			case <-session.Ctx.Done():
+			}
+		}()
 	}
 }
 
@@ -67,17 +77,39 @@ func main() {
 
 	fmt.Println("Server started on port 25565")
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
 
+	// Shutdown on Ctrl+C
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		fmt.Println("\nShutting down...")
+		cancel()
+		listener.Close()
+	}()
+
+accept:
 	for {
-		conn, err := listener.Accept() // TODO: set timeout
+		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Connection error:", err)
-			continue
+			select {
+			case <-ctx.Done():
+				break accept
+			default:
+				fmt.Println("Connection error:", err)
+				continue accept
+			}
 		}
 
-		session := server.NewSession(conn, ctx)
-
-		go server.HandleSession(session, HandlePacket) // Handle each client in a separate goroutine
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			session := server.NewSession(conn, ctx)
+			server.HandleSession(session, HandlePacket) // Handle each client in a separate goroutine
+		}()
 	}
+
+	wg.Wait()
 }
