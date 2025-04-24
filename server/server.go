@@ -49,7 +49,7 @@ func (s *Session) processQueue(ctx context.Context) {
 	}
 }
 
-func (s *Session) Close() {
+func (s *Session) Shutdown() {
 	s.once.Do(func() {
 		s.Cancel()
 		// wait for the goroutines to finish
@@ -104,7 +104,7 @@ func ReadPacket(ctx context.Context, session *Session) (id int32, payload *bytes
 		id, payload, err := packets.ReadPacket(session.Conn)
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				go session.Close()
+				go session.Shutdown()
 			}
 			fmt.Println(err)
 			return
@@ -129,7 +129,7 @@ func ReadPacket(ctx context.Context, session *Session) (id int32, payload *bytes
 }
 
 func HandleSession(session *Session, handler PacketHandler) {
-	defer session.Close()
+	defer session.Shutdown()
 
 	fmt.Println("Client connected:", session.Conn.RemoteAddr())
 

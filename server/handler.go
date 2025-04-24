@@ -47,7 +47,7 @@ func DefaultPingReqPacketHandler(session *Session, p *packets.PingReqPacket) err
 	session.Queue <- buf
 
 	fmt.Println("Sent pong response, closing connection")
-	session.Close()
+	session.Shutdown()
 	return nil
 }
 

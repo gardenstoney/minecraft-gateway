@@ -52,7 +52,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 
 		if err != nil {
 			fmt.Println(err)
-			session.Close()
+			session.Shutdown()
 			return
 		}
 
@@ -60,7 +60,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 			select {
 			case <-time.After(3 * time.Second):
 				session.Queue <- buf
-				session.Close()
+				session.Shutdown()
 			case <-session.Ctx.Done():
 			}
 		}()
