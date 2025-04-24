@@ -1,4 +1,4 @@
-module mcmockserver
+module github.com/gardenstoney/minecraft-gateway
 
 go 1.24.1
 

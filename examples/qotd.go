@@ -8,14 +8,15 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"mcmockserver/packets"
-	"mcmockserver/server"
 	"net"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
+	"github.com/gardenstoney/minecraft-gateway/protocol/server"
 )
 
 var quotes = map[string][]string{

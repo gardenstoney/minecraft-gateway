@@ -3,7 +3,8 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"mcmockserver/packets"
+
+	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
 )
 
 type PacketHandler func(session *Session, packet packets.ServerboundPacket)

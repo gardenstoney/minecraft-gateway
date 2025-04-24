@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mcmockserver/packets"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
 )
 
 type ConnectionMode byte
