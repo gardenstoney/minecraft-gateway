@@ -9,19 +9,26 @@ import (
 	"github.com/google/uuid"
 )
 
+// DataField wraps types that implement both WritableField and ReadableField.
+//
+// It represents a field in a packet that can be serialized and deserialized.
 type DataField interface {
 	WritableField
 	ReadableField
 }
 
+// A WritableField represents a field in a packet that can be serialized.
 type WritableField interface {
 	Write(buf *bytes.Buffer) error
 }
 
+// A ReadableField represents a field in a packet that can be deserialized.
 type ReadableField interface {
 	Read(r *bytes.Reader) error
 }
 
+// BuildPacket takes a series of WritableFields composing a packet,
+// builds and serializes a packet to buf
 func BuildPacket(buf *bytes.Buffer, fields ...WritableField) error {
 	contentbuf := bytes.NewBuffer(make([]byte, 0))
 	for _, f := range fields {
@@ -40,6 +47,7 @@ func BuildPacket(buf *bytes.Buffer, fields ...WritableField) error {
 	return err
 }
 
+// DataField Boolean represents bool field in a packet
 type Boolean bool
 
 func (df Boolean) Write(buf *bytes.Buffer) error {
@@ -68,6 +76,7 @@ func (df *Boolean) Read(r *bytes.Reader) error {
 	return nil
 }
 
+// DataField Byte represents byte field in a packet
 type Byte byte
 
 func (df Byte) Write(buf *bytes.Buffer) error {
@@ -84,6 +93,7 @@ func (df *Byte) Read(r *bytes.Reader) error {
 	return nil
 }
 
+// DataField UnsignedShort represents uint16 field in a packet
 type UnsignedShort uint16
 
 func (df UnsignedShort) Write(buf *bytes.Buffer) error {
@@ -94,6 +104,7 @@ func (df *UnsignedShort) Read(r *bytes.Reader) error {
 	return binary.Read(r, binary.BigEndian, df)
 }
 
+// DataField Int represents int32 field in a packet
 type Int int32
 
 func (df Int) Write(buf *bytes.Buffer) error {
@@ -104,6 +115,7 @@ func (df *Int) Read(r *bytes.Reader) error {
 	return binary.Read(r, binary.BigEndian, df)
 }
 
+// DataField Long represents int64 field in a packet
 type Long int64
 
 func (df Long) Write(buf *bytes.Buffer) error {
@@ -114,6 +126,9 @@ func (df *Long) Read(r *bytes.Reader) error {
 	return binary.Read(r, binary.BigEndian, df)
 }
 
+// DataField String represents string field in a packet
+//
+// Serialized String is prefixed with a VarInt of its length
 type String string
 
 func (df String) Write(buf *bytes.Buffer) error {
@@ -141,6 +156,12 @@ func (df *String) Read(r *bytes.Reader) error {
 	return err
 }
 
+// DataField VarInt represents variable-length int32 field in a packet
+//
+// The most significant bit of each byte indicates whether more bytes follow:
+// 1 if more bytes follow, 0 if not.
+//
+// Serialized VarInt can be from 1 byte to 5 bytes long
 type VarInt int32
 
 const SEGMENT_BITS = 0x7F // 0b01111111
@@ -196,6 +217,10 @@ func (df *VarInt) Read(r *bytes.Reader) error {
 	return err
 }
 
+// DataField Position represents position field in a packet
+//
+// Serialized form is composed of X, Z which are 26 bits each, and 12 bits of Y.
+// Thus, unintended content can be written when the values are out of range
 type Position struct {
 	X int32
 	Y int16
@@ -224,6 +249,7 @@ func (df *Position) Read(r *bytes.Reader) error {
 	return nil
 }
 
+// DataField UUID represents UUID field in a packet
 type UUID uuid.UUID
 
 func (df UUID) Write(buf *bytes.Buffer) error {
@@ -240,7 +266,29 @@ func (df UUID) String() string {
 	return uuid.UUID(df).String()
 }
 
+// DataField PrefixedArray[T] represents length-prefixed array of field T
+//
+// # Caution
+//
+// Make sure to initialize elements of PrefixedArray properly
+// since T would typically be a pointer, whose zero value is nil.
+// Use MakePrefixedArray when creating a non-empty array.
+//
+// # Note
+//
+// T is typically a pointer type, since Read() requires pointer receivers.
+// This means the slice will store pointers, leading to data scattered on heap.
+// Consider optimizing if performance is critical.
 type PrefixedArray[T DataField] []T
+
+func MakePrefixedArray[T DataField](len int, cap int, newElem func() T) PrefixedArray[T] {
+	df := make(PrefixedArray[T], len, cap)
+	for i := 0; i < len; i++ {
+		df[i] = newElem()
+	}
+
+	return df
+}
 
 func (df PrefixedArray[T]) Write(buf *bytes.Buffer) error {
 	if err := VarInt(len(df)).Write(buf); err != nil {
@@ -271,7 +319,7 @@ func (df *PrefixedArray[T]) Read(r *bytes.Reader) error {
 	return nil
 }
 
-// PrefixedArray of Byte optimized
+// Optimized PrefixedArray[Byte]
 type ByteArray []byte
 
 func (df ByteArray) Write(buf *bytes.Buffer) error {
@@ -296,6 +344,9 @@ func (df *ByteArray) Read(r *bytes.Reader) error {
 	return err
 }
 
+// WritableDataField RawBytes is serialized directly into its byte contents.
+//
+// Use it to flexibly serialize a field and integrate it with BuildPacket
 type RawBytes []byte
 
 func (df RawBytes) Write(buf *bytes.Buffer) error {
@@ -304,6 +355,15 @@ func (df RawBytes) Write(buf *bytes.Buffer) error {
 	return err
 }
 
+// DataField Optional[T] represents Optional field in a packet
+//
+// Serialized Optional[T] is prefixed with Boolean of whether the value exists.
+// If so, the value T is followed.
+//
+// # Caution
+//
+// Make sure to initialize Item properly since T is typically a pointer.
+// A nil Optional Item with Exists marked as true could crash the program.
 type Optional[T DataField] struct {
 	Exists Boolean
 	Item   T
@@ -329,7 +389,7 @@ func (df *Optional[T]) Read(r *bytes.Reader) error {
 	}
 
 	if df.Exists {
-		if err := df.Item.Read(r); err != nil { // TODO: crash if df.Item is nil
+		if err := df.Item.Read(r); err != nil { // crash if df.Item is nil
 			return err
 		}
 	}
