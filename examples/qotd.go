@@ -59,7 +59,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 		go func() {
 			select {
 			case <-time.After(3 * time.Second):
-				session.Queue <- buf
+				session.Queue <- buf.Bytes()
 				session.Shutdown()
 			case <-session.Ctx.Done():
 			}

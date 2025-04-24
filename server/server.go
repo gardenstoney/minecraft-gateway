@@ -27,7 +27,7 @@ type Session struct {
 	Ctx    context.Context
 	Cancel context.CancelFunc
 	Conn   net.Conn
-	Queue  chan *bytes.Buffer
+	Queue  chan []byte
 	Mode   ConnectionMode
 	Wg     sync.WaitGroup
 	once   sync.Once
@@ -41,7 +41,7 @@ func (s *Session) processQueue(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case buf := <-s.Queue:
-			_, err := buf.WriteTo(s.Conn)
+			_, err := s.Conn.Write(buf)
 			if err != nil {
 				fmt.Println("processQueue:", err)
 			}
@@ -59,7 +59,7 @@ func (s *Session) Shutdown() {
 		for {
 			select {
 			case buf := <-s.Queue:
-				_, err := buf.WriteTo(s.Conn)
+				_, err := s.Conn.Write(buf)
 				if err != nil {
 					fmt.Println("processQueue:", err)
 				}
@@ -76,7 +76,7 @@ func (s *Session) Shutdown() {
 
 func NewSession(conn net.Conn, parentCtx context.Context) *Session {
 	ctx, cancel := context.WithCancel(parentCtx)
-	queue := make(chan *bytes.Buffer, 16)
+	queue := make(chan []byte, 16)
 
 	session := Session{
 		Ctx:    ctx,
