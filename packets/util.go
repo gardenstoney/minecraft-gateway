@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type DataType interface {
+type DataField interface {
 	WritableField
 	ReadableField
 }
@@ -104,7 +104,7 @@ func (df *Int) Read(r *bytes.Reader) error {
 	return binary.Read(r, binary.BigEndian, df)
 }
 
-type Long uint64
+type Long int64
 
 func (df Long) Write(buf *bytes.Buffer) error {
 	return binary.Write(buf, binary.BigEndian, df)
@@ -198,7 +198,7 @@ func (df *VarInt) Read(r *bytes.Reader) error {
 
 type Position struct {
 	X int32
-	Y int32
+	Y int16
 	Z int32
 }
 
@@ -219,7 +219,7 @@ func (df *Position) Read(r *bytes.Reader) error {
 
 	df.X = int32((packed >> 38) & 0x3FFFFFF)
 	df.Z = int32((packed >> 12) & 0x3FFFFFF)
-	df.Y = int32(packed & 0xFFF)
+	df.Y = int16(packed & 0xFFF)
 
 	return nil
 }
@@ -240,20 +240,15 @@ func (df UUID) String() string {
 	return uuid.UUID(df).String()
 }
 
-// only pointers to DataType objects can be stored,
-// leading to data scattered on heap
-// could be optimized???
-type PrefixedArray[T DataType] struct {
-	Items []T
-}
+type PrefixedArray[T DataField] []T
 
 func (df PrefixedArray[T]) Write(buf *bytes.Buffer) error {
-	if err := VarInt(len(df.Items)).Write(buf); err != nil {
+	if err := VarInt(len(df)).Write(buf); err != nil {
 		return err
 	}
 
-	for _, item := range df.Items {
-		if err := item.Write(buf); err != nil { // crash if df.Item is nil
+	for _, item := range df {
+		if err := item.Write(buf); err != nil { // crash if item is nil
 			return err
 		}
 	}
@@ -267,14 +262,10 @@ func (df *PrefixedArray[T]) Read(r *bytes.Reader) error {
 		return err
 	}
 
-	df.Items = make([]T, len)
-
 	for i := 0; i < int(len); i++ {
-		var item T
-		if err := item.Read(r); err != nil { // TODO: crash if df.Item is nil
+		if err := (*df)[i].Read(r); err != nil { // crash if df[i] is nil
 			return err
 		}
-		df.Items[i] = item
 	}
 
 	return nil
@@ -313,10 +304,7 @@ func (df RawBytes) Write(buf *bytes.Buffer) error {
 	return err
 }
 
-// TODO: nah just make it check if it's nil, also T should be always pointer. make it explicit.
-// all other DataTypes shouldn't be able to call Read if it's nil.
-// only one's in the Optional DataType can be.
-type Optional[T DataType] struct {
+type Optional[T DataField] struct {
 	Exists Boolean
 	Item   T
 }
