@@ -25,9 +25,24 @@ allowing it to just shutdown when idle and keep the cloud cost low.
 * Avoids Elastic IP usage
 * Keeps the main server's IP hidden from strangers
 
+### Configuration
+The program looks for config.yaml and env variables (including .env file) for configuration.
+
+Configurable settings are:
+* `instance_id` (*INSTANCE_ID*): required, EC2 instance id of the main server
+* `whitelist` (*WHITELIST*): optional, lists of whitelisted uuids
+* `port`: optional, defaults to 25565, port of the main server
+
+You might want to add these AWS configurations to env variables.
+* *AWS_ACCESS_KEY_ID*
+* *AWS_SECRET_ACCESS_KEY*
+* *AWS_REGION*
+
+
 ## Long-term Plans (if i continue working on this)
 
 * Support multiple minecraft versions
+* Implement encrypted login
 * Make the behavior highly customizable?
     * could be a lightweight player queue server
     * or a loadbalancer
