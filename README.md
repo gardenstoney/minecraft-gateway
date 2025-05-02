@@ -21,7 +21,7 @@ allowing it to just shutdown when idle and keep the cloud cost low.
 
 ### Benefits
 
-* Reduces Costs by letting the heavy main server sleep when idle
+* Reduces costs by letting the heavy main server sleep when idle
 * Avoids Elastic IP usage
 * Keeps the main server's IP hidden from strangers
 
