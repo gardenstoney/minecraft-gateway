@@ -9,7 +9,7 @@ Heavily influenced by [Tnze/go-mc](https://github.com/Tnze/go-mc).
 It aims to cover pre-ingame stages and limited parts of ingame stage.
 It only supports Minecraft 1.21.1 for now.
 
-> **Warning**: This codebase hasn't undergone any serious security audit.
+> **Disclaimer**: This codebase hasn't undergone any serious security audit.
 Use it at your own risk.
 
 ## Setup
@@ -21,7 +21,7 @@ allowing it to just shutdown when idle and keep the cloud cost low.
 
 ### Benefits
 
-* Reduces costs by letting the heavy main server sleep when idle
+* Reduces cloud service costs by letting the heavy main server sleep when idle
 * Avoids Elastic IP usage
 * Keeps the main server's IP hidden from strangers
 
