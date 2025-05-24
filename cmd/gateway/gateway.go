@@ -91,6 +91,8 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 			if swtRunning.CompareAndSwap(false, true) {
 				topWg.Add(1)
 				go func(state int32) {
+					defer topWg.Done()
+
 					// wait for the instance state to become 'stopped' when the instance is 'stopping'
 					if state == 64 {
 						instance, err = waitForStateChange(backgroundCtx, 80)
@@ -100,7 +102,6 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 					}
 					StartWaitTransfer()
 					swtRunning.Store(false)
-					topWg.Done()
 				}(*instance.State.Code)
 			}
 		}
