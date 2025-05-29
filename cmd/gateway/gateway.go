@@ -106,27 +106,37 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 			}
 		}
 
-		// register the session to the waitingList
-		waitingListMu.Lock()
-		waitingList = append(waitingList, session)
-		waitingListMu.Unlock()
-
-		session.Wg.Add(1)
-		go func(s *server.Session) {
-			defer s.Wg.Done()
-
-			<-s.Ctx.Done()
-
+		if swtRunning.Load() {
+			// register the session to the waitingList
 			waitingListMu.Lock()
-			for i := 0; i < len(waitingList); i++ {
-				if waitingList[i] == s {
-					waitingList[i] = waitingList[len(waitingList)-1]
-					waitingList = waitingList[:len(waitingList)-1]
-					break
-				}
-			}
+			waitingList = append(waitingList, session)
 			waitingListMu.Unlock()
-		}(session)
+
+			// remove session from waitinglist when shutting down
+			session.Wg.Add(1)
+			go func(s *server.Session) {
+				defer s.Wg.Done()
+
+				<-s.Ctx.Done()
+
+				waitingListMu.Lock()
+				for i := 0; i < len(waitingList); i++ {
+					if waitingList[i] == s {
+						waitingList[i] = waitingList[len(waitingList)-1]
+						waitingList = waitingList[:len(waitingList)-1]
+						break
+					}
+				}
+				waitingListMu.Unlock()
+			}(session)
+		} else {
+			// ec2 ready but main server not ready, and swt is not running
+			buf := bytes.NewBuffer(make([]byte, 0))
+			packets.ConfigDisconnectPacket{Reason: "An error occured."}.Write(buf)
+
+			session.Transport.Write(buf.Bytes())
+			session.Shutdown()
+		}
 	}
 }
 
