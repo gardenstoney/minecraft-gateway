@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -66,7 +67,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 
 			session.Transport.Write(buf.Bytes())
 			session.Shutdown()
-			fmt.Println(err)
+			slog.Error("Failed to retrieve ec2 instance", "error", err, "session", session.Transport.String())
 			return
 		}
 
@@ -74,6 +75,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 		if *instance.State.Code == 16 {
 			_, err = retrieveMainServerStatus(*instance.PublicDnsName, cfg.Port)
 			if err == nil {
+				slog.Info("Transfering client to main server", "session", session.Transport.String())
 				buf := bytes.NewBuffer(make([]byte, 0))
 				packets.ConfigTransferPacket{
 					Host: packets.String(*instance.PublicIpAddress),
@@ -84,11 +86,13 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 				session.Shutdown()
 				return
 			}
+			// ec2 ready, but main server still offline
 		}
 
 		// run StartWaitTransfer goroutine just once if the instance is offline
 		if *instance.State.Code == 80 || *instance.State.Code == 64 {
 			if swtRunning.CompareAndSwap(false, true) {
+				slog.Info("Main server start triggered", "session", session.Transport.String())
 				topWg.Add(1)
 				go func(state int32) {
 					defer topWg.Done()
@@ -131,6 +135,8 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 			}(session)
 		} else {
 			// ec2 ready but main server not ready, and swt is not running
+			slog.Warn("Client isn't transfered nor waiting for main server startup, disconnecting...", "session", session.Transport.String())
+
 			buf := bytes.NewBuffer(make([]byte, 0))
 			packets.ConfigDisconnectPacket{Reason: "An error occured."}.Write(buf)
 
@@ -153,7 +159,7 @@ func StartWaitTransfer() {
 		}.Write(buf)
 
 		broadcastPacketAndClean(buf.Bytes())
-		fmt.Println(err)
+		slog.Error("StartWaitTransfer: Failed to start ec2 instance", "error", err)
 		return
 	}
 
@@ -161,6 +167,7 @@ func StartWaitTransfer() {
 	if err := waitForMainServer(backgroundCtx); err != nil {
 		return // Context canceled
 	}
+	slog.Info("Main server ready")
 
 	// Transfer
 	instance, err := retrieveInstance(cfg.InstanceID)
@@ -171,10 +178,11 @@ func StartWaitTransfer() {
 		}.Write(buf)
 
 		broadcastPacketAndClean(buf.Bytes())
-		fmt.Println(err)
+		slog.Error("StartWaitTransfer: Failed to retrieve ec2 instance", "error", err)
 		return
 	}
 
+	slog.Info("Transfering all waiting clients")
 	buf := bytes.NewBuffer(make([]byte, 0))
 	packets.ConfigTransferPacket{
 		Host: packets.String(*instance.PublicIpAddress),
@@ -193,7 +201,7 @@ func waitForStateChange(ctx context.Context, expect int32) (instance *types.Inst
 
 			instance, err = retrieveInstance(cfg.InstanceID)
 			if err != nil {
-				fmt.Println(err)
+				slog.Error("waitForStateChange: Failed to retrieve ec2 instance", "error", err)
 				c <- -1
 			} else {
 				c <- *instance.State.Code
@@ -320,7 +328,7 @@ func main() {
 	var err error
 	cfg, err = LoadConfig("config.yaml")
 	if err != nil {
-		fmt.Println("Error reading config:", err)
+		slog.Error("Error reading config", "error", err)
 		return
 	}
 
@@ -336,12 +344,12 @@ func main() {
 
 	listener, err := net.Listen("tcp", ":25565")
 	if err != nil {
-		fmt.Println("Error starting server:", err)
+		slog.Error("Failed to start server", "error", err)
 		return
 	}
 	defer listener.Close()
 
-	fmt.Println("Server started on port 25565")
+	slog.Info(fmt.Sprint("Server started on port", cfg.Port))
 
 	var cancel context.CancelFunc
 	backgroundCtx, cancel = context.WithCancel(context.Background())
@@ -364,7 +372,7 @@ accept:
 			case <-backgroundCtx.Done():
 				break accept
 			default:
-				fmt.Println("Connection error:", err)
+				slog.Error("Failed to accept client", "error", err)
 				continue accept
 			}
 		}
@@ -372,7 +380,6 @@ accept:
 		topWg.Add(1)
 		go func() {
 			defer topWg.Done()
-			fmt.Println("Client connected:", conn.RemoteAddr())
 			session := server.NewSession(
 				server.NewQueueingTransport(
 					server.NewKeepAliveTransport(
@@ -393,7 +400,6 @@ accept:
 			)
 
 			server.HandleSession(session, HandlePacket) // Handle each session in a separate goroutine
-			// fmt.Println("done handling session")
 		}()
 	}
 

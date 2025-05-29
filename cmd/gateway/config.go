@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -38,7 +38,7 @@ func LoadConfig(path string) (*Config, error) {
 func ApplyEnvOverrides(cfg *Config) {
 	err := godotenv.Load()
 	if err != nil {
-		fmt.Println("No .env file found")
+		slog.Warn("No .env file found")
 	}
 
 	instanceid := os.Getenv("INSTANCE_ID")

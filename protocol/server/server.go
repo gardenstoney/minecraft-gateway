@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
@@ -35,7 +37,7 @@ func (s *Session) Shutdown() {
 		// wait for the goroutines to finish
 		s.Wg.Wait()
 
-		fmt.Println("Closing Session:", s.Transport)
+		slog.Info("Closing session", "session", s.Transport.String())
 		s.Transport.Close()
 	})
 }
@@ -55,29 +57,31 @@ func NewSession(transport Transporter, parentCtx context.Context) *Session {
 func HandleSession(session *Session, handler PacketHandler) {
 	defer session.Shutdown()
 
+	slog.Info("New session", "session", session.Transport.String())
+
 	// Handshake
 	payload, err := session.Transport.Read(session.Ctx)
 	if err != nil {
-		fmt.Println("Failed to read handshake packet:", err)
+		slog.Error("Failed to read handshake packet", "error", err, "session", session.Transport.String())
 		return
 	}
 
 	handshakeReader := bytes.NewReader(payload)
 	packetID, err := packets.ReadVarint(handshakeReader)
 	if err != nil {
-		fmt.Println("Failed to read handshake packet id:", err)
+		slog.Error("Failed to read handshake packet id", "error", err, "session", session.Transport.String())
 		return
 	}
 
 	if packetID != 0 {
-		fmt.Println("Error handshaking: Unexpected packet type")
+		slog.Error("Invalid handshake packet type", "error", err, "session", session.Transport.String())
 		return
 	}
 
 	handshake := packets.HandshakePacket{}
 	handshake.Read(handshakeReader)
 
-	fmt.Println("Received handshake", handshake)
+	slog.Debug(fmt.Sprint("Received handshake", handshake), "session", session.Transport.String())
 
 	session.Mode = ConnectionMode(handshake.RequestType) // a bit risky?? checking if it's valid first is a good idea
 
@@ -106,7 +110,9 @@ func HandleSession(session *Session, handler PacketHandler) {
 
 		payload, err := session.Transport.Read(session.Ctx)
 		if err != nil {
-			fmt.Println("read packet loop error:", err)
+			if !errors.Is(err, context.Canceled) {
+				slog.Error("Read error", "error", err, "session", session.Transport.String())
+			}
 			return
 		}
 
@@ -116,19 +122,17 @@ func HandleSession(session *Session, handler PacketHandler) {
 			return
 		}
 
-		fmt.Printf("Received packet (ID: %d): %x\n", packetID, payload)
-
 		packetFactory, exists := (*packetRegistry)[packetID]
 
 		if !exists {
-			fmt.Println("Unknown packet ID:", packetID)
+			slog.Error("Unknown packet ID", "packetID", packetID, "session", session.Transport.String())
 			return
 		}
 
 		packet := packetFactory()
 
 		if err := packet.Read(reader); err != nil {
-			fmt.Println("Failed to read packet content:", err)
+			slog.Error("Failed to read packet content", "error", err, "session", session.Transport.String())
 			return
 		}
 

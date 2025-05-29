@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"os"
@@ -52,7 +53,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 		}.Write(buf)
 
 		if err != nil {
-			fmt.Println(err)
+			slog.Error("Failed to write ConfigDisconnect", "error", err, "session", session.Transport.String())
 			session.Shutdown()
 			return
 		}
@@ -69,14 +70,15 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 }
 
 func main() {
+	// slog.SetLogLoggerLevel(slog.LevelDebug)
 	listener, err := net.Listen("tcp", ":25565")
 	if err != nil {
-		fmt.Println("Error starting server:", err)
+		slog.Error("Failed to start server", "error", err)
 		return
 	}
 	defer listener.Close()
 
-	fmt.Println("Server started on port 25565")
+	slog.Info("Server started on port 25565")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -99,7 +101,7 @@ accept:
 			case <-ctx.Done():
 				break accept
 			default:
-				fmt.Println("Connection error:", err)
+				slog.Error("Failed to accept client", "error", err)
 				continue accept
 			}
 		}

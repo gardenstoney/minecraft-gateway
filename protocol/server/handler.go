@@ -2,7 +2,7 @@ package server
 
 import (
 	"bytes"
-	"fmt"
+	"log/slog"
 
 	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
 )
@@ -12,7 +12,7 @@ type PacketHandler func(session *Session, packet packets.ServerboundPacket)
 const serverlistping = "{\"version\": {\"name\": \"1.21.1\",\"protocol\": 767},\"players\": {\"max\": 100,\"online\": 0,\"sample\": []},\"description\": {\"text\": \"Hello, world!\"},\"favicon\": \"data:image/png;base64,<data>\",\"enforcesSecureChat\": false}"
 
 func DefaultStatusReqPacketHandler(session *Session) error {
-	fmt.Println("Received status request")
+	slog.Info("Status request", "session", session.Transport.String())
 
 	// Status response
 	buf := bytes.NewBuffer(make([]byte, 0))
@@ -20,18 +20,18 @@ func DefaultStatusReqPacketHandler(session *Session) error {
 		Response: serverlistping,
 	}.Write(buf)
 	if err != nil {
-		fmt.Println("Failed to build status response:", err)
+		slog.Error("Failed to build status response", "error", err, "session", session.Transport.String())
 		return err
 	}
 
 	session.Transport.Write(buf.Bytes())
 
-	fmt.Println("Sent status response")
+	slog.Debug("Sent status response", "session", session.Transport.String())
 	return nil
 }
 
 func DefaultPingReqPacketHandler(session *Session, p *packets.PingReqPacket) error {
-	fmt.Println("Received ping request")
+	slog.Info("Ping request", "session", session.Transport.String())
 
 	// Pong response
 	buf := bytes.NewBuffer(make([]byte, 0, 10))
@@ -41,19 +41,19 @@ func DefaultPingReqPacketHandler(session *Session, p *packets.PingReqPacket) err
 		p.Timestamp,
 	)
 	if err != nil {
-		fmt.Println("Failed to build pong response:", err)
+		slog.Error("Failed to build pong response", "error", err, "session", session.Transport.String())
 		return err
 	}
 
 	session.Transport.Write(buf.Bytes())
 
-	fmt.Println("Sent pong response, closing connection")
+	slog.Debug("Sent pong response, closing connection", "session", session.Transport.String())
 	session.Shutdown()
 	return nil
 }
 
 func DefaultLoginStartPacketHandler(session *Session, p *packets.LoginStartPacket) error {
-	fmt.Println("LoginStartPacket", p)
+	slog.Info("Login request", "session", session.Transport.String())
 
 	buf := bytes.NewBuffer(make([]byte, 0, 18))
 	err := packets.LoginSuccessPacket{
@@ -67,13 +67,13 @@ func DefaultLoginStartPacketHandler(session *Session, p *packets.LoginStartPacke
 	}
 
 	session.Transport.Write(buf.Bytes())
-	fmt.Println("Sent LoginSuccess")
+	slog.Debug("Sent LoginSuccess", "session", session.Transport.String())
 
 	return nil
 }
 
 func DefaultLoginAckPacketHandler(session *Session) error {
-	fmt.Println("Login Acknowledged, switching to configuration mode")
+	slog.Debug("Login Acknowledged, switching to configuration mode", "session", session.Transport.String())
 	session.Mode = Config
 	return nil
 }

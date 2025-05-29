@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"time"
 
@@ -18,6 +19,7 @@ type Transporter interface {
 	Read(context.Context) ([]byte, error)
 	Write(buf []byte) error
 	Close() error
+	fmt.Stringer
 }
 
 // Transporter wrapper for net.Conn
@@ -66,6 +68,10 @@ func (t *NetTransport) Close() error {
 	return t.Conn.Close()
 }
 
+func (t NetTransport) String() string {
+	return t.Conn.RemoteAddr().String()
+}
+
 // Intermediary transporter for setting up send queue
 // to make writes in multiple goroutines safe
 type QueueingTransport struct {
@@ -86,7 +92,7 @@ func NewQueueingTransport(inner Transporter) *QueueingTransport {
 			case buf := <-queue:
 				err := inner.Write(buf)
 				if err != nil {
-					fmt.Println("send queue error:", err)
+					slog.Error("Send queue error", "error", err, "transport", "QueueingTransport", "source", inner.String())
 				}
 			}
 		}
@@ -125,12 +131,16 @@ func (t *QueueingTransport) flush() (err error) {
 		case buf := <-t.queue:
 			err = t.inner.Write(buf)
 			if err != nil {
-				fmt.Println("error flushing:", err)
+				slog.Error("Flush queue error", "error", err, "transport", "QueueingTransport", "source", t.String())
 			}
 		default:
 			return
 		}
 	}
+}
+
+func (t QueueingTransport) String() string {
+	return t.inner.String()
 }
 
 // Convenience transporter for handling keep alives in transport layer
@@ -160,7 +170,7 @@ func NewKeepAliveTransport(
 			case t := <-time.After(writeIdleTimeout):
 				err := inner.Write(keepAliveFunc(t))
 				if err != nil {
-					fmt.Println("error write keepalive:", err)
+					slog.Error("KeepAlive write error", "error", err, "transport", "QueueingTransport", "source", t.String())
 				}
 			}
 		}
@@ -191,4 +201,8 @@ func (t *KeepAliveTransport) Close() error {
 	close(t.done)
 
 	return t.inner.Close()
+}
+
+func (t KeepAliveTransport) String() string {
+	return t.inner.String()
 }
