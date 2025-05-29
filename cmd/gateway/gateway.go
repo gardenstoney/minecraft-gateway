@@ -37,7 +37,7 @@ var topWg sync.WaitGroup
 var swtRunning atomic.Bool
 
 var waitingListMu sync.Mutex
-var waitingList map[*server.Session]struct{ cancel, done chan struct{} }
+var waitingList []*server.Session
 
 func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 	switch p := packet.(type) {
@@ -64,7 +64,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 			buf := bytes.NewBuffer(make([]byte, 0))
 			packets.ConfigDisconnectPacket{Reason: "An error occured."}.Write(buf)
 
-			session.Queue <- buf.Bytes()
+			session.Transport.Write(buf.Bytes())
 			session.Shutdown()
 			fmt.Println(err)
 			return
@@ -80,7 +80,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 					Port: packets.VarInt(cfg.Port),
 				}.Write(buf)
 
-				session.Queue <- buf.Bytes()
+				session.Transport.Write(buf.Bytes())
 				session.Shutdown()
 				return
 			}
@@ -107,33 +107,26 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 		}
 
 		// register the session to the waitingList
-		cancel := make(chan struct{}, 1)
-		done := make(chan struct{}, 1)
-
 		waitingListMu.Lock()
-		waitingList[session] = struct {
-			cancel chan struct{}
-			done   chan struct{}
-		}{cancel, done}
+		waitingList = append(waitingList, session)
 		waitingListMu.Unlock()
 
-		// holdSession
 		session.Wg.Add(1)
-		go func(session *server.Session, cancel chan struct{}, done chan struct{}) {
-			defer session.Wg.Done()
-			err := holdSession(session, cancel)
+		go func(s *server.Session) {
+			defer s.Wg.Done()
 
-			if err != nil { // Context canceled
-				waitingListMu.Lock()
-				close(cancel)
-				close(done)
-				delete(waitingList, session)
-				waitingListMu.Unlock()
+			<-s.Ctx.Done()
 
-				return
+			waitingListMu.Lock()
+			for i := 0; i < len(waitingList); i++ {
+				if waitingList[i] == s {
+					waitingList[i] = waitingList[len(waitingList)-1]
+					waitingList = waitingList[:len(waitingList)-1]
+					break
+				}
 			}
-			done <- struct{}{}
-		}(session, cancel, done)
+			waitingListMu.Unlock()
+		}(session)
 	}
 }
 
@@ -241,40 +234,17 @@ func waitForMainServer(ctx context.Context) error {
 
 func broadcastPacketAndClean(buf []byte) {
 	waitingListMu.Lock()
-	for s, w := range waitingList {
-		w.cancel <- struct{}{}
-		<-w.done
+	for _, s := range waitingList {
+		s.Transport.Write(buf)
 
-		s.Queue <- buf
-
-		close(w.cancel)
-		close(w.done)
-		s.Shutdown()
-
-		delete(waitingList, s)
+		topWg.Add(1)
+		go func() { // prevent deadlock with waitinglist clean goroutine when session ends
+			defer topWg.Done()
+			s.Shutdown()
+		}()
 	}
+	waitingList = waitingList[:0]
 	waitingListMu.Unlock()
-}
-
-func holdSession(session *server.Session, cancel chan struct{}) error {
-	for {
-		select {
-		case <-cancel:
-			return nil
-		case <-session.Ctx.Done():
-			return session.Ctx.Err()
-		case t := <-time.After(3 * time.Second):
-			keepalive := packets.ConfigKeepAlivePacket{
-				KeepAliveID: packets.Long(t.Unix()),
-			}
-
-			buf := bytes.NewBuffer(make([]byte, 10))
-			keepalive.Write(buf)
-
-			session.Queue <- buf.Bytes()
-			fmt.Println("Sent Keep Alive")
-		}
-	}
 }
 
 func retrieveInstance(id string) (*types.Instance, error) {
@@ -352,10 +322,7 @@ func main() {
 
 	ec2Client = ec2.NewFromConfig(ec2cfg)
 
-	waitingList = make(map[*server.Session]struct {
-		cancel chan struct{}
-		done   chan struct{}
-	})
+	waitingList = make([]*server.Session, 0)
 
 	listener, err := net.Listen("tcp", ":25565")
 	if err != nil {
@@ -395,8 +362,28 @@ accept:
 		topWg.Add(1)
 		go func() {
 			defer topWg.Done()
-			session := server.NewSession(conn, backgroundCtx)
+			fmt.Println("Client connected:", conn.RemoteAddr())
+			session := server.NewSession(
+				server.NewQueueingTransport(
+					server.NewKeepAliveTransport(
+						&server.NetTransport{Conn: conn},
+						5*time.Second,
+						func(t time.Time) []byte {
+							buf := bytes.NewBuffer(make([]byte, 0))
+
+							packets.ConfigKeepAlivePacket{
+								KeepAliveID: packets.Long(t.Unix()),
+							}.Write(buf)
+
+							return buf.Bytes()
+						},
+					),
+				),
+				backgroundCtx,
+			)
+
 			server.HandleSession(session, HandlePacket) // Handle each session in a separate goroutine
+			// fmt.Println("done handling session")
 		}()
 	}
 

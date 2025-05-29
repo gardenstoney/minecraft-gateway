@@ -60,7 +60,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 		go func() {
 			select {
 			case <-time.After(3 * time.Second):
-				session.Queue <- buf.Bytes()
+				session.Transport.Write(buf.Bytes())
 				session.Shutdown()
 			case <-session.Ctx.Done():
 			}
@@ -107,7 +107,24 @@ accept:
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			session := server.NewSession(conn, ctx)
+			session := server.NewSession(
+				server.NewQueueingTransport(
+					server.NewKeepAliveTransport(
+						&server.NetTransport{Conn: conn},
+						5*time.Second,
+						func(t time.Time) []byte {
+							buf := bytes.NewBuffer(make([]byte, 0))
+
+							packets.ConfigKeepAlivePacket{
+								KeepAliveID: packets.Long(t.Unix()),
+							}.Write(buf)
+
+							return buf.Bytes()
+						},
+					),
+				),
+				ctx,
+			)
 			server.HandleSession(session, HandlePacket) // Handle each client in a separate goroutine
 		}()
 	}

@@ -3,12 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"net"
 	"sync"
-	"time"
 
 	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
 )
@@ -25,29 +21,12 @@ const (
 )
 
 type Session struct {
-	Ctx    context.Context
-	Cancel context.CancelFunc
-	Conn   net.Conn
-	Queue  chan []byte
-	Mode   ConnectionMode
-	Wg     sync.WaitGroup
-	once   sync.Once
-}
-
-func (s *Session) processQueue(ctx context.Context) {
-	defer s.Wg.Done()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case buf := <-s.Queue:
-			_, err := s.Conn.Write(buf)
-			if err != nil {
-				fmt.Println("processQueue:", err)
-			}
-		}
-	}
+	Ctx       context.Context
+	Cancel    context.CancelFunc
+	Transport Transporter
+	Mode      ConnectionMode
+	Wg        sync.WaitGroup
+	once      sync.Once
 }
 
 func (s *Session) Shutdown() {
@@ -56,88 +35,37 @@ func (s *Session) Shutdown() {
 		// wait for the goroutines to finish
 		s.Wg.Wait()
 
-	flush: // flush queue
-		for {
-			select {
-			case buf := <-s.Queue:
-				_, err := s.Conn.Write(buf)
-				if err != nil {
-					fmt.Println("processQueue:", err)
-				}
-			default:
-				break flush
-			}
-		}
-
-		fmt.Println("Closing Session:", s.Conn.RemoteAddr())
-		s.Conn.Close()
-		close(s.Queue)
+		fmt.Println("Closing Session:", s.Transport)
+		s.Transport.Close()
 	})
 }
 
-func NewSession(conn net.Conn, parentCtx context.Context) *Session {
+func NewSession(transport Transporter, parentCtx context.Context) *Session {
 	ctx, cancel := context.WithCancel(parentCtx)
-	queue := make(chan []byte, 16)
 
 	session := Session{
-		Ctx:    ctx,
-		Cancel: cancel,
-		Conn:   conn,
-		Queue:  queue,
+		Ctx:       ctx,
+		Cancel:    cancel,
+		Transport: transport,
 	}
-
-	session.Wg.Add(1)
-	go session.processQueue(ctx)
 
 	return &session
-}
-
-func ReadPacket(ctx context.Context, session *Session) (id int32, payload *bytes.Reader, err error) {
-	readCh := make(chan struct {
-		int32
-		*bytes.Reader
-	}, 1)
-
-	session.Wg.Add(1)
-	go func() {
-		defer session.Wg.Done()
-
-		id, payload, err := packets.ReadPacket(session.Conn)
-		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				go session.Shutdown()
-			}
-			fmt.Println(err)
-			return
-		}
-		readCh <- struct {
-			int32
-			*bytes.Reader
-		}{id, payload}
-	}()
-
-	select {
-	case <-ctx.Done():
-		session.Conn.SetReadDeadline(time.Now())
-		err = ctx.Err()
-	case read := <-readCh:
-		id = read.int32
-		payload = read.Reader
-	}
-
-	close(readCh)
-	return id, payload, err
 }
 
 func HandleSession(session *Session, handler PacketHandler) {
 	defer session.Shutdown()
 
-	fmt.Println("Client connected:", session.Conn.RemoteAddr())
-
 	// Handshake
-	packetID, bufreader, err := ReadPacket(session.Ctx, session)
+	payload, err := session.Transport.Read(session.Ctx)
 	if err != nil {
 		fmt.Println("Failed to read handshake packet:", err)
+		return
+	}
+
+	handshakeReader := bytes.NewReader(payload)
+	packetID, err := packets.ReadVarint(handshakeReader)
+	if err != nil {
+		fmt.Println("Failed to read handshake packet id:", err)
 		return
 	}
 
@@ -147,7 +75,7 @@ func HandleSession(session *Session, handler PacketHandler) {
 	}
 
 	handshake := packets.HandshakePacket{}
-	handshake.Read(bufreader)
+	handshake.Read(handshakeReader)
 
 	fmt.Println("Received handshake", handshake)
 
@@ -176,7 +104,14 @@ func HandleSession(session *Session, handler PacketHandler) {
 			packetRegistry = &packets.IngamePacketRegistry
 		}
 
-		packetID, payload, err := ReadPacket(session.Ctx, session)
+		payload, err := session.Transport.Read(session.Ctx)
+		if err != nil {
+			fmt.Println("read packet loop error:", err)
+			return
+		}
+
+		reader := bytes.NewReader(payload)
+		packetID, err := packets.ReadVarint(reader)
 		if err != nil {
 			return
 		}
@@ -192,7 +127,7 @@ func HandleSession(session *Session, handler PacketHandler) {
 
 		packet := packetFactory()
 
-		if err := packet.Read(payload); err != nil {
+		if err := packet.Read(reader); err != nil {
 			fmt.Println("Failed to read packet content:", err)
 			return
 		}

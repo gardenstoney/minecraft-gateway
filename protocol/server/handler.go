@@ -24,7 +24,7 @@ func DefaultStatusReqPacketHandler(session *Session) error {
 		return err
 	}
 
-	session.Queue <- buf.Bytes()
+	session.Transport.Write(buf.Bytes())
 
 	fmt.Println("Sent status response")
 	return nil
@@ -45,7 +45,7 @@ func DefaultPingReqPacketHandler(session *Session, p *packets.PingReqPacket) err
 		return err
 	}
 
-	session.Queue <- buf.Bytes()
+	session.Transport.Write(buf.Bytes())
 
 	fmt.Println("Sent pong response, closing connection")
 	session.Shutdown()
@@ -66,7 +66,7 @@ func DefaultLoginStartPacketHandler(session *Session, p *packets.LoginStartPacke
 		return err
 	}
 
-	session.Queue <- buf.Bytes()
+	session.Transport.Write(buf.Bytes())
 	fmt.Println("Sent LoginSuccess")
 
 	return nil
