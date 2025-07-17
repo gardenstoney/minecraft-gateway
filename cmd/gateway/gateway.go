@@ -349,12 +349,12 @@ func main() {
 	}
 	defer listener.Close()
 
-	slog.Info(fmt.Sprint("Server started on port", cfg.Port))
+	slog.Info(fmt.Sprint("Server started on port ", cfg.Port))
 
 	var cancel context.CancelFunc
 	backgroundCtx, cancel = context.WithCancel(context.Background())
 
-	// Shutdown on Ctrl+C
+	// Shutdown on SIGINT, SIGTERM
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
