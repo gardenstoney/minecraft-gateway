@@ -29,23 +29,21 @@ type NetTransport struct {
 
 // Read a packet from net.Conn, cancelable via context
 //
-// ctx.Err() is prioritized to be returned if it's not nil.
+// ctx.Err() will be returned if read was interrupted.
 func (t *NetTransport) Read(ctx context.Context) (payload []byte, err error) {
-	done := make(chan struct{})
-	defer close(done)
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = t.Conn.SetReadDeadline(time.Now()) // force read to unblock
-		case <-done:
-		}
-	}()
+	stopch := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		t.Conn.SetReadDeadline(time.Now())
+		close(stopch)
+	})
 
 	payloadLength, err := packets.ReadVarint(t.Conn)
 	if err != nil {
-		if e := ctx.Err(); e != nil {
-			err = e
+		if !stop() { // AfterFunc was triggered
+			<-stopch
+			t.Conn.SetReadDeadline(time.Time{})
+
+			return payload, ctx.Err()
 		}
 		return payload, err
 	}
@@ -53,8 +51,11 @@ func (t *NetTransport) Read(ctx context.Context) (payload []byte, err error) {
 	payload = make([]byte, payloadLength)
 	_, err = io.ReadFull(t.Conn, payload)
 
-	if e := ctx.Err(); e != nil {
-		err = e
+	if !stop() { // AfterFunc was triggered
+		<-stopch
+		t.Conn.SetReadDeadline(time.Time{})
+
+		return payload, ctx.Err()
 	}
 	return payload, err
 }
