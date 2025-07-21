@@ -18,17 +18,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gardenstoney/minecraft-gateway/config"
 	"github.com/gardenstoney/minecraft-gateway/protocol/packets"
 	"github.com/gardenstoney/minecraft-gateway/protocol/server"
 	"github.com/google/uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	awsconf "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-var cfg *Config
+var cfg *config.Config
 
 var ec2Client *ec2.Client
 
@@ -60,7 +61,7 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 		server.DefaultLoginAckPacketHandler(session)
 
 	case *packets.ClientInfoPacket:
-		instance, err := retrieveInstance(cfg.InstanceID)
+		instance, err := retrieveInstance(cfg.Server.InstanceId)
 		if err != nil {
 			buf := bytes.NewBuffer(make([]byte, 0))
 			packets.ConfigDisconnectPacket{Reason: "An error occured."}.Write(buf)
@@ -73,13 +74,13 @@ func HandlePacket(session *server.Session, packet packets.ServerboundPacket) {
 
 		// transfer if server is ready
 		if *instance.State.Code == 16 {
-			_, err = retrieveMainServerStatus(*instance.PublicDnsName, cfg.Port)
+			_, err = retrieveMainServerStatus(*instance.PublicDnsName, cfg.Server.Port)
 			if err == nil {
 				slog.Info("Transfering client to main server", "session", session.Transport.String())
 				buf := bytes.NewBuffer(make([]byte, 0))
 				packets.ConfigTransferPacket{
 					Host: packets.String(*instance.PublicIpAddress),
-					Port: packets.VarInt(cfg.Port),
+					Port: packets.VarInt(cfg.Server.Port),
 				}.Write(buf)
 
 				session.Transport.Write(buf.Bytes())
@@ -150,7 +151,7 @@ func StartWaitTransfer() {
 	// Start
 	_, err := ec2Client.StartInstances(
 		backgroundCtx,
-		&ec2.StartInstancesInput{InstanceIds: []string{cfg.InstanceID}},
+		&ec2.StartInstancesInput{InstanceIds: []string{cfg.Server.InstanceId}},
 	)
 	if err != nil { // ctx.err when backgroundCtx cancels during startinstances
 		buf := bytes.NewBuffer(make([]byte, 0))
@@ -170,7 +171,7 @@ func StartWaitTransfer() {
 	slog.Info("Main server ready")
 
 	// Transfer
-	instance, err := retrieveInstance(cfg.InstanceID)
+	instance, err := retrieveInstance(cfg.Server.InstanceId)
 	if err != nil {
 		buf := bytes.NewBuffer(make([]byte, 0))
 		packets.ConfigDisconnectPacket{
@@ -186,7 +187,7 @@ func StartWaitTransfer() {
 	buf := bytes.NewBuffer(make([]byte, 0))
 	packets.ConfigTransferPacket{
 		Host: packets.String(*instance.PublicIpAddress),
-		Port: packets.VarInt(cfg.Port),
+		Port: packets.VarInt(cfg.Server.Port),
 	}.Write(buf)
 
 	broadcastPacketAndClean(buf.Bytes())
@@ -199,7 +200,7 @@ func waitForStateChange(ctx context.Context, expect int32) (instance *types.Inst
 		go func(c chan int32) {
 			defer close(c)
 
-			instance, err = retrieveInstance(cfg.InstanceID)
+			instance, err = retrieveInstance(cfg.Server.InstanceId)
 			if err != nil {
 				slog.Error("waitForStateChange: Failed to retrieve ec2 instance", "error", err)
 				c <- -1
@@ -233,7 +234,7 @@ func waitForMainServer(ctx context.Context) error {
 		go func(c chan error) {
 			defer close(c)
 
-			_, err := retrieveMainServerStatus(*instance.PublicDnsName, cfg.Port)
+			_, err := retrieveMainServerStatus(*instance.PublicDnsName, cfg.Server.Port)
 			c <- err
 		}(c)
 
@@ -326,14 +327,14 @@ func retrieveMainServerStatus(host string, port uint16) (resp packets.StatusResp
 
 func main() {
 	var err error
-	cfg, err = LoadConfig("config.yaml")
+	cfg, err = config.LoadConfig("config.toml")
 	if err != nil {
 		slog.Error("Error reading config", "error", err)
 		return
 	}
 
 	var ec2cfg aws.Config
-	ec2cfg, err = config.LoadDefaultConfig(context.TODO())
+	ec2cfg, err = awsconf.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		log.Fatal(err)
 	}
